@@ -7,7 +7,9 @@ MicroPython Library for SX1276
 ## My dev environment
 * Two Raspberry Pi Pico boards and two Adafruit RFM95W breakouts
 * VScode with Pico-Go extension 
-* I configured project and global settings for Pico-Go ext so I can open two VScode instances and connect to two Pico boards simultanously
+* I configured project and global settings <i>pico-go.json</i> for Pico-Go ext so I can open two VScode window/instances and connect to two Pico boards simultanously
 ## Usage
-* Upload lora.py to board 
+* Connect two boards to dev machine
+* Open sender and receiver folders in two separate VScode windows.
+* Upload lora.py to boards 
 * Run sender.py and receiver.py

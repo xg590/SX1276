@@ -14,6 +14,7 @@ MicroPython Library for SX1276
 * Upload lora.py to boards 
 * Run sender.py and receiver.py
 ## To-do List
+* It is meaningless to do Channel Activity Detection (CAD) before Tx because SX1276 only match elusive preambles which last few milliseconds. No good solution to do Listen Before Talk or CSMA.
 * FHSS implementation
   * FCC mandates freq hopping if dwell time is above a threshold. 
   * Found sample code [here](https://os.mbed.com/teams/Semtech/code/SX1276PingPongFHSS/)

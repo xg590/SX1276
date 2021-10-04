@@ -1,15 +1,14 @@
 ## SX1276
-MicroPython Library for SX1276 
-## Features
-* Send request for acknowledgement and wait 15 seconds for response.
-* Send request but specify a wrong receiver id so acknowledgement will not succeed.
-* Send broadcast and wait no time
-* FHSS implemented (Seem like this is the first implementation)
-  * FCC mandates freq hopping if dwell time is above the threshold 400ms.  
+MicroPython Library for SX1276 LoRa radio modem 
+## Features 
+* Send request, ask for response from a specified recipient, and broadcast. 
+* Implement FHSS (first?)
+  * FCC mandates freqyency hopping if dwell time is above the threshold 400ms.  
+  * Large spreading factor and narrow bandwidth can significantly prolong the dwell time so that freq hopping is necessary for transmiiting large packet.
 ## My dev environment
-* Two Raspberry Pi Pico boards and two Adafruit RFM95W breakouts
+* Two ESP32 with SX1276 (Heltec WiFi LoRa 32 V2)
 * VScode with Pico-Go extension 
-* I configured project and global settings <i>pico-go.json</i> for Pico-Go ext so I can open two VScode window/instances and connect to two Pico boards simultanously
+* I configured project and global settings <i>pico-go.json</i> for Pico-Go ext so I can open two VScode window/instances and connect to two ESP32 boards simultanously
 ## Usage
 * Connect two boards to dev machine
 * Open sender and receiver folders in two separate VScode windows.

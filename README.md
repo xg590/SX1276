@@ -4,6 +4,8 @@ MicroPython Library for SX1276
 * Send request for acknowledgement and wait 15 seconds for response.
 * Send request but specify a wrong receiver id so acknowledgement will not succeed.
 * Send broadcast and wait no time
+* FHSS implemented
+  * FCC mandates freq hopping if dwell time is above the threshold 400ms.  
 ## My dev environment
 * Two Raspberry Pi Pico boards and two Adafruit RFM95W breakouts
 * VScode with Pico-Go extension 
@@ -13,8 +15,6 @@ MicroPython Library for SX1276
 * Open sender and receiver folders in two separate VScode windows.
 * Upload lora.py to boards 
 * Run sender.py and receiver.py
-## To-do List
+## Note
 * It is meaningless to do Channel Activity Detection (CAD) before Tx because SX1276 only match elusive preambles which last few milliseconds. No good solution to do Listen Before Talk or CSMA.
 * FHSS implementation
-  * FCC mandates freq hopping if dwell time is above a threshold. 
-  * Found sample code [here](https://os.mbed.com/teams/Semtech/code/SX1276PingPongFHSS/)

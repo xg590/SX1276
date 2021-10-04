@@ -2,7 +2,7 @@ import time, urandom, struct
 from machine import Pin, SPI
 
 class SX1276:
-    def __init__(self, RST_Pin, CS_Pin, SPI_CH, SCK_Pin, MOSI_Pin, MISO_Pin, DIO0_Pin, SRC_Id, plus20dBm=False):
+    def __init__(self, RST_Pin, CS_Pin, SPI_CH, SCK_Pin, MOSI_Pin, MISO_Pin, DIO0_Pin, DIO1_Pin, SRC_Id, FHSS_list, plus20dBm=False):
         self.src_id      = SRC_Id
         self.seq_num     = 0
         self.flags       = 0
@@ -10,6 +10,7 @@ class SX1276:
         self.header_fmt  = 'HHHH' # src_id, dst_id, seq_num, flag (req / ack)
         self.header_size = struct.calcsize(self.header_fmt)
         self._mode       = None
+        self.FHSS_list   = FHSS_list
         ####################
         #                  #
         #     1.Reset      #
@@ -65,11 +66,13 @@ class SX1276:
             'RegPktSnrValue'       : 0x19 ,
             'RegPktRssiValue'      : 0x1a ,
             'RegRssiValue'         : 0x1b ,
+            'RegHopChannel'        : 0x1c ,
             'RegModemConfig1'      : 0x1d ,
             'RegModemConfig2'      : 0x1e ,
             'RegPreambleMsb'       : 0x20 ,
             'RegPreambleLsb'       : 0x21 ,
             'RegPayloadLength'     : 0x22 ,
+            'RegHopPeriod'         : 0x24 ,
             'RegModemConfig3'      : 0x26 ,
             'RegDioMapping1'       : 0x40 ,
             'RegVersion'           : 0x42 ,
@@ -100,10 +103,10 @@ class SX1276:
             ImplicitHeaderModeOn = {'Implicit':0b1, 'Explicit':0b0}
             self.spi_write('RegModemConfig1', Bw['125KHz'] << 4 | CodingRate[5] << 1 | ImplicitHeaderModeOn['Explicit'])
 
-            SpreadingFactor  = {7:0x7, 9:0x9, 12:0xC}
+            SpreadingFactor  = {7:0x7, 9:0x9, 10:0xA, 12:0xC}
             TxContinuousMode = {'normal':0b0, 'continuous':0b1}
             RxPayloadCrcOn   = {'disable':0b0, 'enable':0b1}
-            self.spi_write('RegModemConfig2', SpreadingFactor[7] << 4 | TxContinuousMode['normal'] << 3 | RxPayloadCrcOn['enable'] << 2 | 0x00) # Last 0x00 is SymbTimeout(9:8)
+            self.spi_write('RegModemConfig2', SpreadingFactor[10] << 4 | TxContinuousMode['normal'] << 3 | RxPayloadCrcOn['enable'] << 2 | 0x00) # Last 0x00 is SymbTimeout(9:8)
 
             LowDataRateOptimize = {'Disabled':0b0, 'Enabled':0b1}
             AgcAutoOn = {'register LnaGain':0b0, 'internal AGC loop':0b1}
@@ -112,11 +115,23 @@ class SX1276:
             # Preamble length
             self.spi_write('RegPreambleMsb', 0x0) # Preamble can be (2^15)kb long, much longer than payload
             self.spi_write('RegPreambleLsb', 0x8) # but we just use 8-byte preamble
+ 
+            # FHSS
+            '''
+            Symbol duration: Tsym = 2^SF / BW
+            For example, if SF = 10, BW = 125kHz, then Tsym = 8.192ms
+            Given FCC permits a 400ms max dwell time per channel, we must hop at least every 48 symbols
+            HoppingPeriod (dwell time on each freq) = FreqHoppingPeriod * Tsym 
+            
+            '''
+            FreqHoppingPeriod = 20 # Symbol periods between freq hops. 
+            self.spi_write('RegHopPeriod', FreqHoppingPeriod) # HoppingPeriod = 20 * 8.192ms
+            FhssPresentChannel = self.spi_read('RegHopChannel')
 
             # See 4.1.4. Frequency Settings
             FXOSC = 32e6 # Freq of XOSC
-            FSTEP = FXOSC / (2**19)
-            Frf = int(915e6 / FSTEP)
+            self.FSTEP = FXOSC / (2**19) 
+            Frf = int(self.FHSS_list[FhssPresentChannel] / self.FSTEP) 
             self.spi_write('RegFrfMsb', (Frf >> 16) & 0xff)
             self.spi_write('RegFrfMid', (Frf >>  8) & 0xff)
             self.spi_write('RegFrfLsb',  Frf        & 0xff)
@@ -152,6 +167,7 @@ class SX1276:
             self.spi_write('RegFifoTxBaseAddr', self.Fifo_Bottom)
             self.spi_write('RegFifoRxBaseAddr', self.Fifo_Bottom)
 
+
         ####################
         #                  #
         #    4.Interrupt   #
@@ -160,6 +176,9 @@ class SX1276:
         '''
         # This section is optional for Tx.
         # It enable an interrupt when Tx is done.
+        # How to understand Table 18? When we want to set IRQ trigger, We use Table 18.
+        # If we want RxDone triggers DIO0, we write 0b00 << 6 to RegDioMapping1. How we know it is 6? Because 6th and 7th bits are for DIO0. 
+        # Why 0b00 instead of 0b01? Because TxDone would trigger DIO0.  
         '''
         self.DioMapping = {
             'Dio0' : {
@@ -172,10 +191,16 @@ class SX1276:
                          'FhssChangeChannel': 0b01 << 4,
                          'CadDetected'      : 0b10 << 4
                      },
-            'Dio2' : {},
-            'Dio3' : {},
-            'Dio4' : {},
-            'Dio5' : {},
+            'Dio2' : {
+                         'FhssChangeChannel': 0b00 << 2,
+                         'FhssChangeChannel': 0b01 << 2,
+                         'FhssChangeChannel': 0b10 << 2
+                     },
+            'Dio3' : {   },
+            'Dio4' : {   },
+            'Dio5' : {   
+                         'ModeReady'        : 0b00 << 4,
+                     },
         }
 
         self.IrqFlags = {
@@ -191,6 +216,8 @@ class SX1276:
 
         dio0_pin = Pin(DIO0_Pin, Pin.IN)
         dio0_pin.irq(handler=self._irq_handler, trigger=Pin.IRQ_RISING)
+        dio1_pin = Pin(DIO1_Pin, Pin.IN)
+        dio1_pin.irq(handler=self._irq_handler, trigger=Pin.IRQ_RISING)
         self.mode = 'STANDBY' # Request Standby mode so SX1276 performs reception initialization.
 
     def spi_write(self, reg, data, fifo=False):
@@ -221,9 +248,9 @@ class SX1276:
     def mode(self, value):
         if self.mode != value:
             if   value == 'TX':
-                self.spi_write('RegDioMapping1', self.DioMapping['Dio0']['TxDone'])
+                self.spi_write('RegDioMapping1', self.DioMapping['Dio0']['TxDone'] | self.DioMapping['Dio1']['FhssChangeChannel'])
             elif value == 'RXCONTINUOUS':
-                self.spi_write('RegDioMapping1', self.DioMapping['Dio0']['RxDone'])
+                self.spi_write('RegDioMapping1', self.DioMapping['Dio0']['RxDone'] | self.DioMapping['Dio1']['FhssChangeChannel'])
             elif value == 'STANDBY':
                 self.spi_write('RegDioMapping1', 0x00)
             self.spi_write('RegOpMode', self.Mode[value])
@@ -248,7 +275,7 @@ class SX1276:
         self.spi_write('RegFifo', data, fifo=True)            # Write Data FIFO
         self.spi_write('RegPayloadLength', len(data))
 
-    def send(self, dst_id=0, seq_num=0, flags=0, msg=''): # src_id, dst_id,
+    def send(self, dst_id=0, seq_num=0, flags=0, msg=''):     # src_id, dst_id,
         '''
         Create header
         Put header and message together
@@ -257,7 +284,7 @@ class SX1276:
         wait 15 seconds for ack request (ask receiver to acknowledge)
         wait no time for ack Tx (acknowledge transmittion)
         '''
-        if   flags == self.FLAG['ACK']:                               # if this is ack Tx, it generates no ack_token
+        if   flags == self.FLAG['ACK']:                             # if this is ack Tx, it generates no ack_token
             pass
         elif flags == self.FLAG['REQ']:
             if len(msg)  > 240: raise                               # cannot send a too large message
@@ -268,21 +295,22 @@ class SX1276:
         header = struct.pack(self.header_fmt, self.src_id, dst_id, seq_num, flags)
         data = header + msg.encode()
         self.write_fifo(data)
-        self.mode = 'TX'                                          # Request Standby mode so SX1276 send out payload
+        self.mode = 'TX'                                            # Request Standby mode so SX1276 send out payload
         if flags in [self.FLAG[i] for i in ['ACK','BRD']]:
-            return  # no wait for ack when send out ack or broadcast
+            return # no wait for ack when send out ack or broadcast
         for _ in range(5):
             if self.seq_num:
                 time.sleep(3)
-            else:                           # ack_token is cleaned in Rx IRS so send succeeded.
+            else: # ack_token is cleaned in Rx IRS so send succeeded.
                 break
         else:
             print('Sending Timeout')
 
     def _irq_handler(self, pin):
         irq_flags = self.spi_read('RegIrqFlags')
-        self.spi_write('RegIrqFlags', 0xff)                   # write anything could clear all types of interrupt flags
-        if irq_flags & self.IrqFlags['TxDone']:
+        self.spi_write('RegIrqFlags', 0xff)                   # write 0xff could clear all types of interrupt flags
+
+        if irq_flags & self.IrqFlags['TxDone']:    
             '''
             When Tx mode is requested and data is send out, TxDone is triggered.
             Then request Rx mode and wait for acknowledgement
@@ -295,9 +323,10 @@ class SX1276:
                 pass
             self.after_TxDone(None)
 
-        elif irq_flags & self.IrqFlags['RxDone']:
-            if irq_flags & self.IrqFlags['PayloadCrcError']:
-                print('PayloadCrcError')
+        elif irq_flags & self.IrqFlags['RxDone']:    
+            if irq_flags & self.IrqFlags['PayloadCrcError']:    
+                packet, SNR, RSSI                   = self.read_fifo() # read fifo 
+                print('PayloadCrcError:', packet)
             else:
                 packet, SNR, RSSI                   = self.read_fifo() # read fifo
                 header, data                        = packet[:self.header_size], packet[self.header_size:] # extract header
@@ -320,6 +349,14 @@ class SX1276:
                 else:
                     print(packet, SNR, RSSI)
 
+        elif irq_flags & self.IrqFlags['FhssChangeChannel']:    
+            '''
+            '''
+            FhssPresentChannel = self.spi_read('RegHopChannel') 
+            Frf = int(self.FHSS_list[FhssPresentChannel] / self.FSTEP)
+            self.spi_write('RegFrfMsb', (Frf >> 16) & 0xff)
+            self.spi_write('RegFrfMid', (Frf >>  8) & 0xff)
+            self.spi_write('RegFrfLsb',  Frf        & 0xff)
         else:
             for i, j in self.IrqFlags.items():
                 if irq_flags & j:

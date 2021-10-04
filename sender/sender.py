@@ -1,30 +1,35 @@
 from machine import Pin
 from lora import SX1276
-import time, urandom
+import time, urandom 
 
-# RFM95W         Pico GPIO old
-LoRa_MISO_Pin  = 16
-LoRa_CS_Pin    = 17
-LoRa_SCK_Pin   = 18
-LoRa_MOSI_Pin  = 19
-LoRa_G0_Pin    = 20 # DIO0_Pin
-LoRa_EN_Pin    = 21
-LoRa_RST_Pin   = 22
-SPI_CH         =  0
+# Heltec WiFi LoRa 32 V2
+LoRa_MISO_Pin = 19
+LoRa_MOSI_Pin = 27
+LoRa_SCK_Pin  =  5
+LoRa_CS_Pin   = 18
+LoRa_RST_Pin  = 14
+LoRa_DIO0_Pin = 26
+LoRa_DIO1_Pin = 35
+LoRa_DIO2_Pin = 34
+SPI_CH        =  1
+ 
 
-Pin(LoRa_EN_Pin, Pin.OUT).on()
+urandom.seed(11)   
+channels2Hopping = [902_300_000+200_000 * urandom.randint(0,127) for i in range(128)] # 902~928 MHz  
+
 LoRa_id = 1
-lora = SX1276(LoRa_RST_Pin, LoRa_CS_Pin, SPI_CH, LoRa_SCK_Pin, LoRa_MOSI_Pin, LoRa_MISO_Pin, LoRa_G0_Pin, LoRa_id)
+lora = SX1276(LoRa_RST_Pin, LoRa_CS_Pin, SPI_CH, LoRa_SCK_Pin, LoRa_MOSI_Pin, LoRa_MISO_Pin, LoRa_DIO0_Pin, LoRa_DIO1_Pin, LoRa_id, channels2Hopping)
 lora.after_TxDone = lambda self: print('TxDone')
 lora.req_packet_handler = lambda self, packet, SNR, RSSI: print('New req packet:', packet, SNR, RSSI)
 lora.brd_packet_handler = lambda self, packet, SNR, RSSI: print('New brd packet:', packet, SNR, RSSI)
 if 1:
+    # payload = str(urandom.randint(100,65536))+") Hello~"
+    # print(payload)
+    # lora.send(dst_id=0, msg=payload, flags=lora.FLAG['REQ']) # Sender's lora_id is 1 and receiver's is 0
+    # payload = str(urandom.randint(100,65536))+") Hello~"
+    # print(payload)
+    # lora.send(dst_id=3, msg=payload, flags=lora.FLAG['REQ']) # specified a wrong receiver id. Request will not be responded.
     payload = str(urandom.randint(100,65536))+") Hello~"
     print(payload)
-    lora.send(dst_id=0, msg=payload, flags=lora.FLAG['REQ'])
-    payload = str(urandom.randint(100,65536))+") Hello~"
-    print(payload)
-    lora.send(dst_id=3, msg=payload, flags=lora.FLAG['REQ'])
-    payload = str(urandom.randint(100,65536))+") Hello~"
-    print(payload)
-    lora.send(dst_id=3, msg=payload, flags=lora.FLAG['BRD'])
+    lora.send(dst_id=3, msg=payload, flags=lora.FLAG['BRD']) # A broadcast request. Do not expect respond.
+

@@ -11,6 +11,7 @@ class SX1276:
         self.header_size = struct.calcsize(self.header_fmt)
         self._mode       = None
         self.FHSS_list   = FHSS_list
+        self.test_flag   = None # Test if ack is received~
         ####################
         #                  #
         #     1.Reset      #
@@ -339,10 +340,12 @@ class SX1276:
                     self.send(dst_id=src_id, seq_num=seq_num, flags=self.FLAG['ACK'], msg='') # Thi is a ack message
                     self.req_packet_handler(None, data, SNR, RSSI)
                 elif flags == self.FLAG['ACK']:              # ACK Received
-                    if seq_num == self.seq_num:            # Sender receives acknowledgement
+                    if seq_num == self.seq_num:            # Sender receives acknowledgement 
+                        self.test_flag = True
                         self.mode    = 'STANDBY'
                         self.seq_num = 0                   # clear seq_num so waiting in send function ends
                     else:                                  # Wrong acknowledgement
+                        self.test_flag = False
                         return                             # Ignore so Rx continues
                 elif flags == self.FLAG['BRD']:            # BRD Received
                     self.brd_packet_handler(None, data, SNR, RSSI)

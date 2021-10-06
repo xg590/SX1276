@@ -17,5 +17,7 @@ MicroPython Library for SX1276 LoRa radio modem
 ## FHSS
 * To prove the point of frequency hopping, I use the RTL-SDR to monitor the spectrum. In following waterfall diagram, we see the signal hops between 914 and 916MHz as I programmed it to be.
 <img src="fhss.jpg"></img>
+* FHSS is not necessary if the message is short. For example, a 29Bytes packet can be transmitted under 400ms, given parameters {SF:10, BW:125kHz, CR:4/5, Header: Explicit , Preamble: 6}. 
+<img src="airtime_calculator.jpg"></img>
 ## Note
 * It is meaningless to do Channel Activity Detection (CAD) before Tx because SX1276 only match elusive preambles which last few milliseconds. No good solution to do Listen Before Talk or CSMA. 

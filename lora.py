@@ -119,11 +119,13 @@ class SX1276:
  
             # FHSS
             '''
+            How does SX1276 chip hop: Two SX1276 chips were given a same series of frequencies, they can do freq hopping across the series. 
+            An IRQ was triggered after the chip spent enough (dwell) time in one frequency then the freq was reset in the handler.
             Symbol duration: Tsym = 2^SF / BW
             For example, if SF = 10, BW = 125kHz, then Tsym = 8.192ms
             Given FCC permits a 400ms max dwell time per channel, we must hop at least every 48 symbols
             HoppingPeriod (dwell time on each freq) = FreqHoppingPeriod * Tsym 
-            
+            In the following code, the chip would hop for every 20 symbols.
             '''
             FreqHoppingPeriod = 20 # Symbol periods between freq hops. 
             self.spi_write('RegHopPeriod', FreqHoppingPeriod) # HoppingPeriod = 20 * 8.192ms

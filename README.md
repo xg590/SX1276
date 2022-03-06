@@ -1,3 +1,4 @@
+This repo implements more than basic SX1276 operations while [Learn_SX1276](https://github.com/xg590/Learn_SX1276) shows all the basics. 
 ## SX1276
 MicroPython Library for SX1276 LoRa radio modem 
 ## Features 

@@ -14,7 +14,7 @@ LoRa_DIO2_Pin = 34
 SPI_CH        =  1
 
 random.seed(11)   
-channels2Hopping = [914_000_000+200_000 * random.randint(0,10) for i in range(128)] # 902~928 MHz   
+channels2Hopping = [914_000_000+200_000 * random.randint(0,10) for i in range(128)] # 914~916 MHz   
 # channels2Hopping = [902_300_000+200_000 * random.randint(0,127) for i in range(128)] # 902~928 MHz  
 
 LoRa_id = 1

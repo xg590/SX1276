@@ -14,7 +14,7 @@ LoRa_DIO2_Pin = 34
 SPI_CH        =  1 
 
 random.seed(11)   
-channels2Hopping = [914_000_000+200_000 * random.randint(0,10) for i in range(128)] # 902~928 MHz   
+channels2Hopping = [914_000_000+200_000 * random.randint(0,10) for i in range(128)] # Both sender and receiver need to know the sequence of frequences they are hopping on before the first hopping operation.
 
 LoRa_id = 0
 lora = SX1276(LoRa_RST_Pin, LoRa_CS_Pin, SPI_CH, LoRa_SCK_Pin, LoRa_MOSI_Pin, LoRa_MISO_Pin, LoRa_DIO0_Pin, LoRa_DIO1_Pin, LoRa_id, channels2Hopping)

@@ -330,6 +330,9 @@ class SX1276:
                 print('PayloadCrcError:', packet)
             else:
                 packet, SNR, RSSI                   = self.read_fifo() # read fifo
+                if len(packet) < self.header_size:
+                    print(packet, SNR, RSSI)
+                    return
                 header, data                        = packet[:self.header_size], packet[self.header_size:] # extract header
                 src_id, dst_id, seq_num, flags = struct.unpack(self.header_fmt, header) # parse header
                 if   flags == self.FLAG['REQ']:            # REQ Received

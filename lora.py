@@ -261,7 +261,7 @@ class SX1276:
         self.spi_write('RegFifoAddrPtr', self.spi_read('RegFifoRxCurrentAddr'))
         packet     = self.spi_read('RegFifo', self.spi_read('RegRxNbBytes'))
         PacketSnr  = self.spi_read('RegPktSnrValue')
-        SNR        = PacketSnr / 4
+        SNR        = struct.unpack_from('b', bytes([PacketSnr]))[0] / 4
         PacketRssi = self.spi_read('RegPktRssiValue')
         #Rssi = read(RegRssiValue)
         if SNR < 0:
@@ -330,6 +330,9 @@ class SX1276:
                 print('PayloadCrcError:', packet)
             else:
                 packet, SNR, RSSI                   = self.read_fifo() # read fifo
+                if len(packet) < self.header_size:
+                    print(packet, SNR, RSSI)
+                    return
                 header, data                        = packet[:self.header_size], packet[self.header_size:] # extract header
                 src_id, dst_id, seq_num, flags = struct.unpack(self.header_fmt, header) # parse header
                 if   flags == self.FLAG['REQ']:            # REQ Received

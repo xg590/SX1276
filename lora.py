@@ -261,7 +261,7 @@ class SX1276:
         self.spi_write('RegFifoAddrPtr', self.spi_read('RegFifoRxCurrentAddr'))
         packet     = self.spi_read('RegFifo', self.spi_read('RegRxNbBytes'))
         PacketSnr  = self.spi_read('RegPktSnrValue')
-        SNR        = PacketSnr / 4
+        SNR        = struct.unpack_from('b', bytes([PacketSnr]))[0] / 4
         PacketRssi = self.spi_read('RegPktRssiValue')
         #Rssi = read(RegRssiValue)
         if SNR < 0:

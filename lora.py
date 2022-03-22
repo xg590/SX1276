@@ -233,11 +233,11 @@ class SX1276:
         self.spi.write(data)
         self.cs_pin.value(1) # release the bus.
 
-    def spi_read(self, reg=None, length=1):
+    def spi_read(self, reg=None, length=None):
         self.cs_pin.value(0)
         # https://docs.micropython.org/en/latest/library/machine.SPI.html#machine-softspi
-        if length == 1:
-            data = self.spi.read(length+1, self.RegTable[reg])[1]
+        if length is None:
+            data = self.spi.read(2, self.RegTable[reg])[1]
         else:
             data = self.spi.read(length+1, self.RegTable[reg])[1:]
         self.cs_pin.value(1)

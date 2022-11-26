@@ -3,40 +3,35 @@ from machine import Pin, SPI
 
 class SX1276:
     def __init__(self, RST_Pin, CS_Pin, SPI_CH, SCK_Pin, MOSI_Pin, MISO_Pin, DIO0_Pin, DIO1_Pin, SRC_Id, FHSS_list, plus20dBm=False):
-        self.src_id      = SRC_Id
-        self.seq_num     = 0
-        self.flags       = 0
-        self.FLAG        = {'REQ':0, 'ACK':1, 'BRD':2} # Request: need ack response, Acknowledge: ack response, Broadcast: no need for response
+        self.src_id      = SRC_Id  # id of packet sender
+        self.seq_num     = 0       # seq_num is a packet id. If we ask the receiver return an acknowledgement, how do we know which packet it is acknowledging?
+        self.pkt_type    = 0
+        self.PKT_TYPE    = {'REQ':0, 'ACK':1, 'BRD':2} # Request: sender needs an ack packet from the receiver as the response to this req packet, Acknowledge: the receiver sends this ack response, Broadcast: sender needs no response
         self.header_fmt  = 'HHHH' # src_id, dst_id, seq_num, flag (req / ack)
         self.header_size = struct.calcsize(self.header_fmt)
         self._mode       = None
+        self.role        = 'T' # Default role is TRANSMITTER instead of RECEIVER.
         self.FHSS_list   = FHSS_list
-        self.test_flag   = None # Test if ack is received~
-        ####################
-        #                  #
-        #     1.Reset      #
-        #                  #
-        ####################
-        # Reset LoRa Module
+        ########################
+        #                      #
+        #  1. Reset the modem  #
+        #                      #
+        ########################
         rst_pin = Pin(RST_Pin, Pin.OUT)
         rst_pin.off()
         time.sleep(0.01)
         rst_pin.on()
         time.sleep(0.01)
 
-        ####################
-        #                  #
-        #      2.SPI       #
-        #                  #
-        ####################
-        '''
-        Tx: Transmittion, Rx: Reception
-        We command LoRa module to perform Tx/Rx operations via the SPI interface.
-        We disable SPI communication first to ensure it only happends when we need.
-        Define communication functions read and write.
-        The SPI comm is enabled temporarily for reading and writing and disabled thereafter.
-        '''
-        # Disable SPI communication with the LoRa module
+        #################################
+        #                               #
+        #  2. SPI comm with the modem.  #
+        #                               #
+        #################################
+
+        # Tx: Modem's wireless transmittion, Rx: Reception
+        # Modem communicates with other modem because we command the modem to perform Tx/Rx operations via the SPI interface.
+        # We disable SPI communication with the modem first to ensure Tx/Rx operations only happends when we need.
         self.cs_pin = Pin(CS_Pin, Pin.OUT)
         self.cs_pin.on() # Release board from SPI Bus by bringing it into high impedance status.
 
@@ -116,37 +111,34 @@ class SX1276:
             # Preamble length
             self.spi_write('RegPreambleMsb', 0x0) # Preamble can be (2^15)kb long, much longer than payload
             self.spi_write('RegPreambleLsb', 0x8) # but we just use 8-byte preamble
- 
+
+
             # FHSS
-            '''
-            How does SX1276 chip hop: Two SX1276 chips were given a same series of frequencies, they can do freq hopping across the series. 
-            An IRQ was triggered after the chip spent enough (dwell) time in one frequency then the freq was reset in the handler.
-            Symbol duration: Tsym = 2^SF / BW
-            For example, if SF = 10, BW = 125kHz, then Tsym = 8.192ms
-            Given FCC permits a 400ms max dwell time per channel, we must hop at least every 48 symbols
-            HoppingPeriod (dwell time on each freq) = FreqHoppingPeriod * Tsym 
-            In the following code, the chip would hop for every 20 symbols.
-            '''
-            FreqHoppingPeriod = 20 # Symbol periods between freq hops. 
+            # How does SX1276 chip hop?
+            # Two SX1276 chips were given a same series of frequencies.
+            # An IRQ was triggered after the chip spent enough (dwell) time in one frequency during Tx
+            # Then we set a new freq in the IRQ handler.
+
+            # Symbol duration: Tsym = 2^SF / BW
+            # For example, if SF = 10, BW = 125kHz, then Tsym = 8.192ms
+            # Given FCC permits a 400ms max dwell time per channel, we must hop at least every 48 symbols
+            # HoppingPeriod (dwell time on each freq) = FreqHoppingPeriod * Tsym
+            # In the following code, the chip would hop freq for every 20 symbols.
+            FreqHoppingPeriod = 20 # Symbol periods between freq hops.
             self.spi_write('RegHopPeriod', FreqHoppingPeriod) # HoppingPeriod = 20 * 8.192ms
             FhssPresentChannel = self.spi_read('RegHopChannel')
 
             # See 4.1.4. Frequency Settings
             FXOSC = 32e6 # Freq of XOSC
-            self.FSTEP = FXOSC / (2**19) 
-            Frf = int(self.FHSS_list[FhssPresentChannel] / self.FSTEP) 
-            self.spi_write('RegFrfMsb', (Frf >> 16) & 0xff)
-            self.spi_write('RegFrfMid', (Frf >>  8) & 0xff)
-            self.spi_write('RegFrfLsb',  Frf        & 0xff)
+            self.FSTEP = FXOSC / (2**19)
+            self.set_freq()
+
 
             # Output Power
-            '''
-            If desired output power is within -4 ~ +15dBm, use PA_LF or PA_HF as amplifier.
-            Use PA_BOOST as amplifier to output +2 ~ +17dBm continuous power or up to 20dBm
-              peak power in a duty cycled operation.
-            Here we will always use PA_BOOST.
-            Since we use PA_BOOST, Pout = 2 + OutputPower and MaxPower could be any number (Why not 0b111/0x7?)
-            '''
+            # If desired output power is within -4 ~ +15dBm, use PA_LF or PA_HF as amplifier.
+            # Use PA_BOOST as amplifier to output +2 ~ +17dBm continuous power or up to 20dBm peak power in a duty cycled operation.
+            # Here we will always use PA_BOOST.
+            # Since we use PA_BOOST, Pout = 2 + OutputPower and MaxPower could be any number (Why not 0b111/0x7?)
             PaSelect    = {'PA_BOOST':0b1, 'RFO':0b0} # Choose PA_BOOST (instead of RFO) as the power amplifier
             MaxPower    = {'15dBm':0x7, '13dBm':0x2}  # Pmax = 10.8 + 0.6 * 7
             OutputPower = {'17dBm':0xf, '2dBm':0x0}
@@ -157,32 +149,30 @@ class SX1276:
                 PaDac = {'default':0x04, 'enable_PA_BOOST':0x07} # Can be 0x04 or 0x07. 0x07 will enables the +20dBm option on PA_BOOST pin
                 self.spi_write('RegPaDac', PaDac['enable_PA_BOOST'])
 
+
             # FIFO data buffer
-            '''
-            SX1276 has a 256 byte memory area as the FIFO buffer for Tx/Rx operations.
-            How do we know which area is for Tx and which is for Rx.
-            We must set the base addresses RegFifoTxBaseAddr and RegFifoRxBaseAddr independently.
-            Since SX1276 work in a half-duplex manner, we better set both base addresses
-            at the bottom (0x00) of the FIFO buffer so that we can buffer 256 byte data
-            during transmition or reception.
-            '''
+            # SX1276 has a 256 byte memory area as the FIFO buffer for Tx/Rx operations.
+            # How do we know which area is for Tx and which is for Rx.
+            # We must set the base addresses RegFifoTxBaseAddr and RegFifoRxBaseAddr independently.
+            # Since SX1276 work in a half-duplex manner, we better set both base addresses
+            # at the bottom (0x00) of the FIFO buffer so that we can buffer 256 byte data
+            # during transmition or reception.
             self.Fifo_Bottom = 0x00 # We choose this value to max buffer we can write (then send out)
             self.spi_write('RegFifoTxBaseAddr', self.Fifo_Bottom)
             self.spi_write('RegFifoRxBaseAddr', self.Fifo_Bottom)
 
 
-        ####################
-        #                  #
-        #    4.Interrupt   #
-        #                  #
-        ####################
-        '''
+        #######################
+        #                     #
+        #     4. Interrupt    #
+        #                     #
+        #######################
+
         # This section is optional for Tx.
         # It enable an interrupt when Tx is done.
         # How to understand Table 18? When we want to set IRQ trigger, We use Table 18.
-        # If we want RxDone triggers DIO0, we write 0b00 << 6 to RegDioMapping1. How we know it is 6? Because 6th and 7th bits are for DIO0. 
-        # Why 0b00 instead of 0b01? Because TxDone would trigger DIO0.  
-        '''
+        # If we want RxDone triggers DIO0, we write 0b00 << 6 to RegDioMapping1. How we know it is 6? Because 6th and 7th bits are for DIO0.
+        # Why 0b00 instead of 0b01? Because TxDone would trigger DIO0.
         self.DioMapping = {
             'Dio0' : {
                          'RxDone'           : 0b00 << 6,
@@ -201,7 +191,7 @@ class SX1276:
                      },
             'Dio3' : {   },
             'Dio4' : {   },
-            'Dio5' : {   
+            'Dio5' : {
                          'ModeReady'        : 0b00 << 4,
                      },
         }
@@ -243,16 +233,26 @@ class SX1276:
         self.cs_pin.value(1)
         return data
 
+    def set_freq(self):
+        FhssPresentChannel = self.spi_read('RegHopChannel') & 0b00_111_111
+        Frf = int(self.FHSS_list[FhssPresentChannel] / self.FSTEP)
+        #print('[New Freq CH]', FhssPresentChannel)
+        self.spi_write('RegFrfMsb', (Frf >> 16) & 0xff)
+        self.spi_write('RegFrfMid', (Frf >>  8) & 0xff)
+        self.spi_write('RegFrfLsb',  Frf        & 0xff)
+
     @property
     def mode(self):
         return self._mode
 
     @mode.setter
     def mode(self, value):
+        #print('[New mode]', value)
         if self.mode != value:
             if   value == 'TX':
                 self.spi_write('RegDioMapping1', self.DioMapping['Dio0']['TxDone'] | self.DioMapping['Dio1']['FhssChangeChannel'])
             elif value == 'RXCONTINUOUS':
+                #self.pkt_type = self.PKT_TYPE['REQ']
                 self.spi_write('RegDioMapping1', self.DioMapping['Dio0']['RxDone'] | self.DioMapping['Dio1']['FhssChangeChannel'])
             elif value == 'STANDBY':
                 self.spi_write('RegDioMapping1', 0x00)
@@ -278,57 +278,54 @@ class SX1276:
         self.spi_write('RegFifo', data, fifo=True)            # Write Data FIFO
         self.spi_write('RegPayloadLength', len(data))
 
-    def send(self, dst_id=0, seq_num=0, flags=0, msg=''):     # src_id, dst_id,
-        '''
-        Create header
-        Put header and message together
-        Write payload to FIFO
-        Request Tx mode so payload is sent out
-        wait 15 seconds for ack request (ask receiver to acknowledge)
-        wait no time for ack Tx (acknowledge transmittion)
-        '''
-        if   flags == self.FLAG['ACK']:                             # if this is ack Tx, it generates no ack_token
-            pass
-        elif flags == self.FLAG['REQ']:
-            if len(msg)  > 240: raise                               # cannot send a too large message
+    def send(self, dst_id=0, seq_num=0, pkt_type=0, msg=''):     # src_id, dst_id,
+        if len(msg)  > 240: raise                               # cannot send a too large message
+        self.pkt_type = pkt_type
+        # 1. Create header
+        # 2. Put header and message together
+        # 3. Write payload to FIFO
+        # 4. Put the modem in Tx mode so payload is sent out
+        # 5. Then put the modem in Rx mode and wait 15 seconds if the packet is asking receiver to acknowledge.
+        # 6. Or wait no time if the packet is for broadcasting or is for acknowledging
+        # [Tx side] self.pkt_type = req ; Mode = Tx ; TxDone; RxCont
+        # [Rx side] RxDone ; Mode = STANDBY ; send 'ACK'
+        if pkt_type == self.PKT_TYPE['REQ']:
             seq_num      = urandom.randint(1,65535)
             self.seq_num = seq_num
-        elif flags == self.FLAG['BRD']:
-            if len(msg)  > 240: raise                               # cannot send a too large message
-        header = struct.pack(self.header_fmt, self.src_id, dst_id, seq_num, flags)
+        header = struct.pack(self.header_fmt, self.src_id, dst_id, seq_num, pkt_type)
         data = header + msg.encode()
         self.write_fifo(data)
         self.mode = 'TX'                                            # Request Standby mode so SX1276 send out payload
-        if flags in [self.FLAG[i] for i in ['ACK','BRD']]:
-            return # no wait for ack when send out ack or broadcast
-        for _ in range(5):
-            if self.seq_num:
-                time.sleep(3)
-            else: # ack_token is cleaned in Rx IRS so send succeeded.
-                break
-        else:
-            print('Sending Timeout')
+        if pkt_type == self.PKT_TYPE['REQ']:
+            for _ in range(3):
+                if self.seq_num==0:
+                    break
+                time.sleep(1)
+            else:
+                pass#print('The last message is not acknowledged before timeout') # No break means no response in 3 seconds
+            self.mode = 'STANDBY'           # RxCont mode  is no long active
 
     def _irq_handler(self, pin):
         irq_flags = self.spi_read('RegIrqFlags')
-        self.spi_write('RegIrqFlags', 0xff)                   # write 0xff could clear all types of interrupt flags
+        self.spi_write('RegIrqFlags', 0xff)                   # write 0xff could clear all types of interrupt pkt_type
 
-        if irq_flags & self.IrqFlags['TxDone']:    
+        if irq_flags & self.IrqFlags['TxDone']:
             '''
             When Tx mode is requested and data is send out, TxDone is triggered.
             Then request Rx mode and wait for acknowledgement
             '''
-            if   self.flags == self.FLAG['REQ']:
-                self.mode = 'RXCONTINUOUS'
-            elif self.flags == self.FLAG['ACK']:
-                pass
-            elif self.flags == self.FLAG['BRD']:
-                pass
+            if   self.pkt_type == self.PKT_TYPE['REQ']:
+                self.mode = 'RXCONTINUOUS' # since we change the mode to Rx, we need to change it to Standby after
+            elif self.pkt_type == self.PKT_TYPE['ACK']:
+                self.mode = 'RXCONTINUOUS' # The receiver has sent an ACK.
+            elif self.pkt_type == self.PKT_TYPE['BRD']:
+                self.mode = 'STANDBY' # The receiver has sent an ACK.
+
             self.after_TxDone(None)
 
-        elif irq_flags & self.IrqFlags['RxDone']:    
-            if irq_flags & self.IrqFlags['PayloadCrcError']:    
-                packet, SNR, RSSI                   = self.read_fifo() # read fifo 
+        elif irq_flags & self.IrqFlags['RxDone']:
+            if irq_flags & self.IrqFlags['PayloadCrcError']:
+                packet, SNR, RSSI                   = self.read_fifo() # read fifo
                 print('PayloadCrcError:', packet)
             else:
                 packet, SNR, RSSI                   = self.read_fifo() # read fifo
@@ -336,39 +333,32 @@ class SX1276:
                     print(packet, SNR, RSSI)
                     return
                 header, data                        = packet[:self.header_size], packet[self.header_size:] # extract header
-                src_id, dst_id, seq_num, flags = struct.unpack(self.header_fmt, header) # parse header
-                if   flags == self.FLAG['REQ']:            # REQ Received
+                src_id, dst_id, seq_num, pkt_type = struct.unpack(self.header_fmt, header) # parse header
+                if   pkt_type == self.PKT_TYPE['REQ']:            # REQ Received
                     if dst_id == self.src_id:
-                        pass
-                    elif dst_id != self.src_id:            # Not the right receiver
-                        return                             # Do not response
-                    self.send(dst_id=src_id, seq_num=seq_num, flags=self.FLAG['ACK'], msg='') # Thi is a ack message
-                    self.req_packet_handler(None, data, SNR, RSSI)
-                elif flags == self.FLAG['ACK']:              # ACK Received
-                    if seq_num == self.seq_num:            # Sender receives acknowledgement 
-                        self.test_flag = True
-                        self.mode    = 'STANDBY'
+                        self.mode = 'STANDBY'
+                        self.send(dst_id=src_id, seq_num=seq_num, pkt_type=self.PKT_TYPE['ACK'], msg='') # Thi is a ack message
+                        self.req_packet_handler(None, data, SNR, RSSI)
+                        #print("We received a REQ packet and its dst_id matches our src_id. We are going to acknowledge it.")
+                    else :
+                        self.req_packet_handler(None, data, SNR, RSSI)
+                        print("We received a REQ packet but its dst_id does not match our src_id. We are not going to acknowledge it but we still display its content.")
+                elif pkt_type == self.PKT_TYPE['ACK']:            # ACK Received
+                    if seq_num == self.seq_num:            # Sender receives acknowledgement
                         self.seq_num = 0                   # clear seq_num so waiting in send function ends
-                    else:                                  # Wrong acknowledgement
-                        self.test_flag = False
-                        return                             # Ignore so Rx continues
-                elif flags == self.FLAG['BRD']:            # BRD Received
+                        #print("Our last message is acknowledged")
+                elif pkt_type == self.PKT_TYPE['BRD']:            # BRD Received
                     self.brd_packet_handler(None, data, SNR, RSSI)
+                    #print("We received a BRD packet whose sender does not expect an acknowledgement.")
                 else:
                     print(packet, SNR, RSSI)
 
-        elif irq_flags & self.IrqFlags['FhssChangeChannel']:    
-            '''
-            '''
-            FhssPresentChannel = self.spi_read('RegHopChannel') 
-            Frf = int(self.FHSS_list[FhssPresentChannel] / self.FSTEP)
-            self.spi_write('RegFrfMsb', (Frf >> 16) & 0xff)
-            self.spi_write('RegFrfMid', (Frf >>  8) & 0xff)
-            self.spi_write('RegFrfLsb',  Frf        & 0xff)
+        elif irq_flags & self.IrqFlags['FhssChangeChannel']:
+            self.set_freq()
         else:
             for i, j in self.IrqFlags.items():
                 if irq_flags & j:
-                    print(i)
+                    print('[Sth went wrong]', i)
 
     def req_packet_handler(self, data, SNR, RSSI):
         pass
@@ -376,5 +366,5 @@ class SX1276:
     def brd_packet_handler(self, data, SNR, RSSI):
         pass
 
-    def after_TxDone(self):
+    def after_TxDone(self, _):
         pass

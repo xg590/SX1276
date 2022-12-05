@@ -132,8 +132,6 @@ class SX1276:
             # See 4.1.4. Frequency Settings
             FXOSC = 32e6 # Freq of XOSC
             self.FSTEP = FXOSC / (2**19)
-            self.set_freq()
-
 
             # Output Power
             # If desired output power is within -4 ~ +15dBm, use PA_LF or PA_HF as amplifier.
@@ -174,6 +172,8 @@ class SX1276:
         # How to understand Table 18? When we want to set IRQ trigger, We use Table 18.
         # If we want RxDone triggers DIO0, we write 0b00 << 6 to RegDioMapping1. How we know it is 6? Because 6th and 7th bits are for DIO0.
         # Why 0b00 instead of 0b01? Because TxDone would trigger DIO0.
+        # If we want FhssChangeChannel trigger DIO1, we write 0b01 << 4 to RegDioMapping1.
+        # Why 0b01? See Table 18, col "DIO1", row "01"
         self.DioMapping = {
             'Dio0' : {
                          'RxDone'           : 0b00 << 6,
@@ -251,6 +251,7 @@ class SX1276:
         #print('[New mode]', value)
         if self.mode != value:
             if   value == 'TX':
+                self.set_freq()
                 self.spi_write('RegDioMapping1', self.DioMapping['Dio0']['TxDone'] | self.DioMapping['Dio1']['FhssChangeChannel'])
                 self.is_available = False
             elif value == 'RXCONTINUOUS':
@@ -259,6 +260,7 @@ class SX1276:
                 #    It is an energy-saving measure. The receiver wakes up from sleep mode and listen the channel.
                 #    If it find nothing, it goes back to sleep.
                 #    When we do regular commu, our receive will listen the channel indefinitely until we stop it.
+                self.set_freq()
                 self.spi_write('RegDioMapping1', self.DioMapping['Dio0']['RxDone'] | self.DioMapping['Dio1']['FhssChangeChannel'])
                 self.is_available = False
             elif value == 'STANDBY':
@@ -301,12 +303,12 @@ class SX1276:
             self.seq_num = seq_num
         header = struct.pack(self.header_fmt, self.src_id, dst_id, seq_num, pkt_type)
         data = header + msg.encode()
+        self.mode = 'STANDBY'
         self.write_fifo(data)
         self.mode = 'TX'                                            # Request Standby mode so SX1276 send out payload
         if pkt_type == self.PKT_TYPE['REQ']:
             for _ in range(5):
                 if self.seq_num==0:
-
                     break
                 time.sleep(1)
             else:
@@ -333,6 +335,7 @@ class SX1276:
             if   self.pkt_type == self.PKT_TYPE['REQ']:
                 # Sender's REQ Tx will meet this condition
                 # 1st critical point (CP), mode shifts from Tx to RxCont
+                self.mode = 'STANDBY'
                 self.mode = 'RXCONTINUOUS'
             elif self.pkt_type == self.PKT_TYPE['ACK']:
                 # 3rd CP: Receiver's ACK response will meet this condition
@@ -342,6 +345,7 @@ class SX1276:
                     self.is_available = True # Free the receiver
                 else:
                     # We are not doing two-way comm so the receiver will continue to play the receiver.
+                    self.mode = 'STANDBY'
                     self.mode = 'RXCONTINUOUS' # The receiver has sent an ACK.
             elif self.pkt_type == self.PKT_TYPE['BRD']:
                 self.mode = 'STANDBY'

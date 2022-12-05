@@ -2,16 +2,17 @@ import time, urandom, struct
 from machine import Pin, SPI
 
 class SX1276:
-    def __init__(self, RST_Pin, CS_Pin, SPI_CH, SCK_Pin, MOSI_Pin, MISO_Pin, DIO0_Pin, DIO1_Pin, SRC_Id, FHSS_list, plus20dBm=False):
-        self.src_id      = SRC_Id  # id of packet sender
-        self.seq_num     = 0       # seq_num is a packet id. If we ask the receiver return an acknowledgement, how do we know which packet it is acknowledging?
-        self.pkt_type    = 0
-        self.PKT_TYPE    = {'REQ':0, 'ACK':1, 'BRD':2} # Request: sender needs an ack packet from the receiver as the response to this req packet, Acknowledge: the receiver sends this ack response, Broadcast: sender needs no response
-        self.header_fmt  = 'HHHH' # src_id, dst_id, seq_num, flag (req / ack)
-        self.header_size = struct.calcsize(self.header_fmt)
-        self._mode       = None
-        self.role        = 'T' # Default role is TRANSMITTER instead of RECEIVER.
-        self.FHSS_list   = FHSS_list
+    def __init__(self, RST_Pin, CS_Pin, SPI_CH, SCK_Pin, MOSI_Pin, MISO_Pin, DIO0_Pin, DIO1_Pin, SRC_Id, FHSS_list, plus20dBm=False, two_way_comm=False):
+        self.src_id       = SRC_Id  # id of packet sender
+        self.seq_num      = 0       # seq_num is a packet id. If we ask the receiver return an acknowledgement, how do we know which packet it is acknowledging?
+        self.pkt_type     = 0
+        self.PKT_TYPE     = {'REQ':0, 'ACK':1, 'BRD':2} # Request: sender needs an ack packet from the receiver as the response to this req packet, Acknowledge: the receiver sends this ack response, Broadcast: sender needs no response
+        self.header_fmt   = 'HHHH' # src_id, dst_id, seq_num, flag (req / ack)
+        self.header_size  = struct.calcsize(self.header_fmt)
+        self._mode        = None
+        self.FHSS_list    = FHSS_list
+        self.two_way_comm = two_way_comm
+        self.is_available = False  # let the main code know Tx and RxCont is done
         ########################
         #                      #
         #  1. Reset the modem  #
@@ -251,9 +252,15 @@ class SX1276:
         if self.mode != value:
             if   value == 'TX':
                 self.spi_write('RegDioMapping1', self.DioMapping['Dio0']['TxDone'] | self.DioMapping['Dio1']['FhssChangeChannel'])
+                self.is_available = False
             elif value == 'RXCONTINUOUS':
-                #self.pkt_type = self.PKT_TYPE['REQ']
+                # Q: so why we use RXCONTINUOUS instead of RXSINGLE?
+                # A: If you refers to page 39 of the datasheet, you will find RXSINGLE procedure has a Timeout mechanism.
+                #    It is an energy-saving measure. The receiver wakes up from sleep mode and listen the channel.
+                #    If it find nothing, it goes back to sleep.
+                #    When we do regular commu, our receive will listen the channel indefinitely until we stop it.
                 self.spi_write('RegDioMapping1', self.DioMapping['Dio0']['RxDone'] | self.DioMapping['Dio1']['FhssChangeChannel'])
+                self.is_available = False
             elif value == 'STANDBY':
                 self.spi_write('RegDioMapping1', 0x00)
             self.spi_write('RegOpMode', self.Mode[value])
@@ -280,7 +287,6 @@ class SX1276:
 
     def send(self, dst_id=0, seq_num=0, pkt_type=0, msg=''):     # src_id, dst_id,
         if len(msg)  > 240: raise                               # cannot send a too large message
-        self.pkt_type = pkt_type
         # 1. Create header
         # 2. Put header and message together
         # 3. Write payload to FIFO
@@ -289,6 +295,7 @@ class SX1276:
         # 6. Or wait no time if the packet is for broadcasting or is for acknowledging
         # [Tx side] self.pkt_type = req ; Mode = Tx ; TxDone; RxCont
         # [Rx side] RxDone ; Mode = STANDBY ; send 'ACK'
+        self.pkt_type = pkt_type
         if pkt_type == self.PKT_TYPE['REQ']:
             seq_num      = urandom.randint(1,65535)
             self.seq_num = seq_num
@@ -297,57 +304,82 @@ class SX1276:
         self.write_fifo(data)
         self.mode = 'TX'                                            # Request Standby mode so SX1276 send out payload
         if pkt_type == self.PKT_TYPE['REQ']:
-            for _ in range(3):
+            for _ in range(5):
                 if self.seq_num==0:
+
                     break
                 time.sleep(1)
             else:
-                pass#print('The last message is not acknowledged before timeout') # No break means no response in 3 seconds
-            self.mode = 'STANDBY'           # RxCont mode  is no long active
+                print('The last message is not acknowledged before timeout') # No break means no response in 5 seconds
 
     def _irq_handler(self, pin):
         irq_flags = self.spi_read('RegIrqFlags')
         self.spi_write('RegIrqFlags', 0xff)                   # write 0xff could clear all types of interrupt pkt_type
 
+        # For one complete "Request for acknowledgement" communication, there are 7 critical points (CP):
+        # The receiver Rx continuously.
+        # The sender Tx something then TxDone is trigger on the sender. (1st critical point)
+        # In the irq of TxDone on the sender, "mode shifts from Tx to RxCont" so the sender prepares to listen the ACK response.
+        # An RxDone is trigger on all receivers. (2nd CP)
+        # In RxDone irq, if dst_id matches self.src_id, the receiver is the right one.
+        # The right receiver will shift mode to STANDBY to Tx the ACK.
+        # The receiver Tx the ACK then TxDone is trigger on the receiver. (3rd CP)
+        # In the irq, the receiver will go back to RxCont if it is not a two-way commu.
+        # Or the receiver will go to standby for further use. Meanwhile, the sender is waiting for an ACK packet.
+        # The sender catch the ACK response when RxDone is triggered on the sender. (4th CP)
+        # Then the sender's mode shifts from RxCont to STANDBY
         if irq_flags & self.IrqFlags['TxDone']:
-            '''
-            When Tx mode is requested and data is send out, TxDone is triggered.
-            Then request Rx mode and wait for acknowledgement
-            '''
+            # When Tx mode is requested and data is send out, TxDone is triggered.
             if   self.pkt_type == self.PKT_TYPE['REQ']:
-                self.mode = 'RXCONTINUOUS' # since we change the mode to Rx, we need to change it to Standby after
+                # Sender's REQ Tx will meet this condition
+                # 1st critical point (CP), mode shifts from Tx to RxCont
+                self.mode = 'RXCONTINUOUS'
             elif self.pkt_type == self.PKT_TYPE['ACK']:
-                self.mode = 'RXCONTINUOUS' # The receiver has sent an ACK.
+                # 3rd CP: Receiver's ACK response will meet this condition
+                if self.two_way_comm:
+                    # Since we are doing two-way communication, now the receiver should be freed.
+                    self.mode = 'STANDBY'
+                    self.is_available = True # Free the receiver
+                else:
+                    # We are not doing two-way comm so the receiver will continue to play the receiver.
+                    self.mode = 'RXCONTINUOUS' # The receiver has sent an ACK.
             elif self.pkt_type == self.PKT_TYPE['BRD']:
-                self.mode = 'STANDBY' # The receiver has sent an ACK.
+                self.mode = 'STANDBY'
+                self.is_available = True # Free the sender after broadcasting
 
             self.after_TxDone(None)
 
         elif irq_flags & self.IrqFlags['RxDone']:
+            packet, SNR, RSSI = self.read_fifo() # read fifo
             if irq_flags & self.IrqFlags['PayloadCrcError']:
-                packet, SNR, RSSI                   = self.read_fifo() # read fifo
                 print('PayloadCrcError:', packet)
             else:
-                packet, SNR, RSSI                   = self.read_fifo() # read fifo
                 if len(packet) < self.header_size:
                     print(packet, SNR, RSSI)
                     return
-                header, data                        = packet[:self.header_size], packet[self.header_size:] # extract header
+                header, data = packet[:self.header_size], packet[self.header_size:] # extract header
                 src_id, dst_id, seq_num, pkt_type = struct.unpack(self.header_fmt, header) # parse header
                 if   pkt_type == self.PKT_TYPE['REQ']:            # REQ Received
+                    # Receiver will get a REQ packet from the sender and meet this condition
                     if dst_id == self.src_id:
+                        # 2nd CP
                         self.mode = 'STANDBY'
-                        self.send(dst_id=src_id, seq_num=seq_num, pkt_type=self.PKT_TYPE['ACK'], msg='') # Thi is a ack message
-                        self.req_packet_handler(None, data, SNR, RSSI)
+                        self.send(dst_id=src_id, seq_num=seq_num, pkt_type=self.PKT_TYPE['ACK'], msg='') # Thi is an ack message
                         #print("We received a REQ packet and its dst_id matches our src_id. We are going to acknowledge it.")
-                    else :
                         self.req_packet_handler(None, data, SNR, RSSI)
+                    else :
                         print("We received a REQ packet but its dst_id does not match our src_id. We are not going to acknowledge it but we still display its content.")
-                elif pkt_type == self.PKT_TYPE['ACK']:            # ACK Received
-                    if seq_num == self.seq_num:            # Sender receives acknowledgement
+                elif pkt_type == self.PKT_TYPE['ACK']:     # ACK Received
+                    if seq_num == self.seq_num:
+                        # 4th CP: The right sender get an ACK packet from the receiver and meet this condition
                         self.seq_num = 0                   # clear seq_num so waiting in send function ends
-                        #print("Our last message is acknowledged")
-                elif pkt_type == self.PKT_TYPE['BRD']:            # BRD Received
+                        self.mode = 'STANDBY'              # The sender has got the ACK packet so we shift way from RxCont mode.
+                        self.is_available = True           # Free the sender
+                        print("Our last message is acknowledged")
+                    else:
+                        pass#print("We are not the original sender although we have received an ACK response. Ignore it, no mode shift.")
+                elif pkt_type == self.PKT_TYPE['BRD']:
+                    # BRD Received by the receiver. Do nothing.
                     self.brd_packet_handler(None, data, SNR, RSSI)
                     #print("We received a BRD packet whose sender does not expect an acknowledgement.")
                 else:

@@ -4,10 +4,13 @@ from machine import Pin, SPI
 class SX1276:
     def __init__(self, RST_Pin, CS_Pin, SPI_CH, SCK_Pin, MOSI_Pin, MISO_Pin, DIO0_Pin, DIO1_Pin, SRC_Id, FHSS_list, plus20dBm=False, debug=False):
         self.src_id       = SRC_Id  # id of packet sender
-        self.seq_num      = 0       # seq_num is a packet id. If we ask the receiver return an acknowledgement, how do we know which packet it is acknowledging?
+        self.seq_num      = 0       # seq_num is a random packet id. Why we need this ? If we ask the receiver return an acknowledgement, how do we know which packet it is acknowledging?
         self.pkt_type     = 0
-        self.PKT_TYPE     = {'REQ':0, 'ACK':1, 'BRD':2} # Request: sender needs an ack packet from the receiver as the response to this req packet, Acknowledge: the receiver sends this ack response, Broadcast: sender needs no response
-        self.header_fmt   = 'HHHH' # src_id, dst_id, seq_num, flag (req / ack)
+        # REQ or Request    : Sender needs an ACK packet from the receiver as the response to this REQ packet
+        # ACK or Acknowledge: Receiver sends this ACK response
+        # BRD or Broadcast  : Sender needs no ACK response
+        self.PKT_TYPE     = {'REQ':0, 'ACK':1, 'BRD':2} 
+        self.header_fmt   = 'HHHH' # src_id, dst_id, seq_num, pkt_type
         self.header_size  = struct.calcsize(self.header_fmt)
         self._mode        = None
         self.FHSS_list    = FHSS_list
@@ -31,10 +34,10 @@ class SX1276:
         #################################
 
         # Tx: Modem's wireless transmittion, Rx: Reception
-        # Modem communicates with other modem because we command the modem to perform Tx/Rx operations via the SPI interface.
-        # We disable SPI communication with the modem first to ensure Tx/Rx operations only happends when we need.
+        # Modem communicates with other modem since we command the modem to perform Tx/Rx operations via the SPI interface.
+        # We disable SPI communication with the modem first, to ensure Tx/Rx operations only happends when we need.
         self.cs_pin = Pin(CS_Pin, Pin.OUT)
-        self.cs_pin.on() # Release board from SPI Bus by bringing it into high impedance status.
+        self.cs_pin.on()                       # Release board from SPI Bus by bringing it into high impedance status.
 
         # SPI communication
         # See datasheet: Device support SPI mode 0 (polarity & phase = 0) up to a max of 10MHz.
@@ -113,12 +116,15 @@ class SX1276:
             self.spi_write('RegPreambleMsb', 0x0) # Preamble can be (2^15)kb long, much longer than payload
             self.spi_write('RegPreambleLsb', 0x8) # but we just use 8-byte preamble
 
-
             # FHSS
-            # How does SX1276 chip hop?
-            # Two SX1276 chips were given a same series of frequencies.
-            # An IRQ was triggered after the chip spent enough (dwell) time in one frequency during Tx
-            # Then we set a new freq in the IRQ handler.
+            # How does SX1276 chip hop the freq spectrum?
+            # First, two SX1276 chips were given a same series of frequencies (FHSS_list) in advance. 
+            # One SX1276 is configured as sender and another is receiver.
+            # The sender is configured to be interrupted (IRQ) by 'TxDone' and 'FhssChangeChannel' 
+            # The receiver is configured to be interrupted by 'RxDone' and 'FhssChangeChannel'
+            # After the chip spent enough (dwell) time on one frequency channel during Tx or Rx, 'FhssChangeChannel' IRQ is triggered. 
+            # New freq (next unused element in FHSS_list) is set in the 'FhssChangeChannel' IRQ handler.
+            # After enough channels are hopped, Tx/Rx is done and TxDone/RxDone is triggered.
 
             # Symbol duration: Tsym = 2^SF / BW
             # For example, if SF = 10, BW = 125kHz, then Tsym = 8.192ms
@@ -166,9 +172,8 @@ class SX1276:
         #     4. Interrupt    #
         #                     #
         #######################
-
-        # This section is optional for Tx.
-        # It enable an interrupt when Tx is done.
+ 
+        # If configured, An TxDone IRQ is triggered transmittion finishes.
         # How to understand Table 18? When we want to set IRQ trigger, We use Table 18.
         # If we want RxDone triggers DIO0, we write 0b00 << 6 to RegDioMapping1. How we know it is 6? Because 6th and 7th bits are for DIO0.
         # Why 0b00 instead of 0b01? Because TxDone would trigger DIO0.
@@ -326,17 +331,16 @@ class SX1276:
         self.spi_write('RegIrqFlags', 0xff)                   # write 0xff could clear all types of interrupt pkt_type
 
         # For one complete "Request for acknowledgement" communication, there are 4 critical points (CP):
-        # The receiver Rx continuously.
-        # The sender Tx something then TxDone is trigger on the sender. (1st critical point)
-        # In the irq of TxDone on the sender, "mode shifts from Tx to RxCont" so the sender prepares to listen the ACK response.
-        # An RxDone is trigger on all receivers. (2nd CP)
-        # In RxDone irq, if dst_id matches self.src_id, the receiver is the right one.
-        # The right receiver will shift mode to STANDBY to Tx the ACK.
-        # The receiver Tx the ACK then TxDone is trigger on the receiver. (3rd CP)
-        # In the irq, the receiver will go back to RxCont if it is not a two-way commu.
-        # Or the receiver will go to standby for further use. Meanwhile, the sender is waiting for an ACK packet.
-        # The sender catch the ACK response when RxDone is triggered on the sender. (4th CP)
-        # Then the sender's mode shifts from RxCont to STANDBY
+        # Step 0: The receiver is put in RxCont mode.
+        # Step 1: The sender Tx something then IRQ TxDone is trigger on the sender. (1st critical point)
+        # Step 2: In the irq handler of the sender, "mode shifts from Tx to RxCont" so the sender prepares to listen the ACK response (step 8).
+        # Step 3: An IRQ RxDone is trigger on all receivers. (2nd CP)
+        # Step 4: In the irq handler, if dst_id matches self.src_id, the receiver know it is the right recipient.
+        # Step 5: The right receiver will shift mode to STANDBY before Tx the ACK.
+        # Step 6: The receiver Tx the ACK then IRQ TxDone is trigger on the RECEIVER. (3rd CP) 
+        # Step 7: In the irq handler, the receiver will be put in STANDBY mode for further use.
+        # Step 8: The sender catch the ACK response (see step 2) when IRQ RxDone is triggered on the sender. (4th CP)
+        # Step 9: In the irq handler, the sender's mode is shifted from RxCont to STANDBY for further use. Done
         if irq_flags & self.IrqFlags['TxDone']:
             # When Tx mode is requested and data is send out, TxDone is triggered.
             if   self.pkt_type == self.PKT_TYPE['REQ']:

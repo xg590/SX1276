@@ -13,11 +13,13 @@ MicroPython Library for SX1276 LoRa radio modem
 * Run [sender.py](sender/sender.py) and [receiver.py](receiver/receiver.py) on two separate MCUs
 ## My dev environment
 * Two MCUs with SX1276 (ESP32: Heltec WiFi LoRa 32 V2)
-* One Linux machine (Raspberry Pi) which runs jupyter-notebook
-* Flash MCUs with MicroPython and Configure WebREPL
-* Install [pyWebREPL](https://github.com/xg590/pyWebREPL) in jupyter-notebook and connect MCUs to Linux machine via USB
-* Edit lora.py through VS Code on the Linux machine.
-* Copy lora.py through rshell in jupyter-notebook to MCUs and use [pyWebREPL](https://github.com/xg590/pyWebREPL) to run MicroPython code "[receiver.ipynb](misc/receiver.ipynb)" and "[sender.ipynb](misc/sender.ipynb)".
+* Flash MCUs with MicroPython
+* Connect two MCUs to a Linux Machine with VSCode via USB
+* Install Pico-W-Go extension for VSCode
+* Open sender/receiver folders in two VSCode windows
+* Configure sender/receiver projects for Pico-W-Go
+* Specify the "Manual Com Device" in Pico-W-Go and restart the Pico-W-Go
+* Play with Pico-W-Go commands
 ## Console Output of sample code
 <img src="misc/console_output.png"></img>
 ## FHSS

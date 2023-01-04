@@ -59,7 +59,7 @@ print('[Received] What we receive from the receiver is:', received_payload)
 
 payload = str(random.randint(100,65536))+") You will not receive this packet because we specified a wrong dst_id"
 print('[Sending]', payload)
-lora.send(dst_id=3, msg=payload, pkt_type=lora.PKT_TYPE['REQ'])
+lora.send(dst_id=3, msg=payload, pkt_type=lora.PKT_TYPE['REQ'], timeout=10, retry=3, debug=True)
 
 for i in range(10):
     if lora.is_available: break

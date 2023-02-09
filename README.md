@@ -28,5 +28,7 @@ MicroPython Library for SX1276 LoRa radio modem
 * FHSS is not necessary if the message is short. For example, a 29Bytes packet can be transmitted under 400ms, given parameters {SF:10, BW:125kHz, CR:4/5, Header: Explicit , Preamble: 6}. 
 <img src="misc/airtime_calculator.jpg"></img><br>
 Download the above air time [calculator](misc/airtime_calculator.zip)
+
 ## Note
+* FHSS feature can be turned off by only specifying one frequency in channels2Hopping / FHSS_list.
 * It is meaningless to do Channel Activity Detection (CAD) before Tx because SX1276 only match elusive preambles which last few milliseconds. No good solution to do Listen Before Talk or CSMA.

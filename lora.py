@@ -131,7 +131,9 @@ class SX1276:
             # Given FCC permits a 400ms max dwell time per channel, we must hop at least every 48 symbols
             # HoppingPeriod (dwell time on each freq) = FreqHoppingPeriod * Tsym
             # In the following code, the chip would hop freq for every 20 symbols.
-            FreqHoppingPeriod = 20 # Symbol periods between freq hops.
+            FreqHoppingPeriod = 20  # Symbol periods between freq hops.
+            if len(FHSS_list) == 1: # As requested in Issue 8, the FHSS feature can be turned off when one freq is provided.  
+                FreqHoppingPeriod = 0 # Hopping feature is turned off by this line
             self.spi_write('RegHopPeriod', FreqHoppingPeriod) # HoppingPeriod = 20 * 8.192ms
             FhssPresentChannel = self.spi_read('RegHopChannel')
 

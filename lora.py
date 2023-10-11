@@ -300,7 +300,11 @@ class SX1276:
         self.spi_write('RegPayloadLength', len(data))
 
     def send(self, dst_id=0, pkt_id=0, pkt_type=0, msg='', retry=1, timeout=9, debug=False): # src_id, dst_id,
-        if len(msg)  > 240: raise                               # cannot send a too large message
+        if len(msg)  > 240: 
+            # The message in the buffer object will be stored in FIFO register before it is sent out. While, the FIFO register is 256 byte in size and it cannot be overflowed.
+            # In addition, this library is working in data link layer and it is upper layer's responsibility to do fragmentation (https://www.geeksforgeeks.org/fragmentation-network-layer/).  
+            print('You got the error because you are trying to send a very long message. You can find an explaination in the code comment' 
+            raise                               # cannot send a too large message
         # 1. Create header
         # 2. Put header and message together
         # 3. Write payload to FIFO

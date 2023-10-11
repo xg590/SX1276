@@ -303,7 +303,7 @@ class SX1276:
         if len(msg)  > 240: 
             # The message in the buffer object will be stored in FIFO register before it is sent out. While, the FIFO register is 256 byte in size and it cannot be overflowed.
             # In addition, this library is working in data link layer and it is upper layer's responsibility to do fragmentation (https://www.geeksforgeeks.org/fragmentation-network-layer/).  
-            print('You got the error because you are trying to send a very long message. You can find an explaination in the code comment' 
+            print('You got the error because you are trying to send a very long message. You can find an explaination to this error in the code comment.')
             raise                               # cannot send a too large message
         # 1. Create header
         # 2. Put header and message together
